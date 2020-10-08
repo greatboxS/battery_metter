@@ -1,3 +1,4 @@
+
 #include "Keyboard.h"
 #include "EEPROM.h"
 
@@ -24,19 +25,21 @@ float alarm_max = 15.0;
 float alarm_min = 11.0;
 double adc_ratio = 0.0;
 bool adc_start = false;
+char keyboard_buffer[50];
+bool isSent = false;
+int timeout_tick = 0;
 
-uint8_t keyboard_buffer[50];
+bool manual_mode = false;
 
 void setup()
 {
-
   // button
   pinMode(BUTTON_1_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_2_PIN, INPUT_PULLUP);
   pinMode(BUZZER_CONTROL_PIN, OUTPUT);
   digitalWrite(BUZZER_CONTROL_PIN, LOW);
 
-  // adc
+  // adcs
   pinMode(ADC_PIN, INPUT_ANALOG);
   analogReadResolution(12);
   // open the serial port:
@@ -46,30 +49,104 @@ void setup()
   Keyboard.begin();
   printf("12VDC Battery DC Metter\r\n");
 
-  eeprom_read(ALARM_MIN_ADDR, alarm_min);
-  eeprom_read(ALARM_MAX_ADDR, alarm_max);
+  int alr_min = 0, alr_max = 0;
+  alr_min = eeprom_read(ALARM_MIN_ADDR);
+  alr_max = eeprom_read(ALARM_MAX_ADDR);
+
+  alarm_max = alr_max / 100;
+  alarm_min = alr_min / 100;
 
   adc_ratio = 57.0 / 10.0;
+
+  if (alarm_min < 0 || alarm_min > 15)
+  {
+    int temp = 1100;
+    eeprom_write(ALARM_MIN_ADDR, temp);
+    alr_min = eeprom_read(ALARM_MIN_ADDR);
+    alarm_min = alr_min / 100.0;
+  }
+
+  if (alarm_max < 0 || alarm_max > 20)
+  {
+    int temp = 1500;
+    eeprom_write(ALARM_MAX_ADDR, temp);
+    alr_max = eeprom_read(ALARM_MAX_ADDR);
+    alarm_max = alr_max / 100.0;
+  }
 }
 
 void loop()
 {
+  if (digitalRead(BUTTON_1_PIN) == LOW)
+  {
+    int t = 5000;
+    while (digitalRead(BUTTON_1_PIN) == LOW)
+    {
+      delay(50);
+      t -= 50;
+      if (t < 0)
+        break;
+    }
+    manual_mode = !manual_mode;
+    if(manual_mode)
+      printf("select manual mode\r\n");
+      else
+      printf("select auto mode\r\n");
+      
+    metter_reset();
+  }
+
+  if (digitalRead(BUTTON_2_PIN) == LOW)
+  {
+    int t = 5000;
+    while (digitalRead(BUTTON_2_PIN) == LOW)
+    {
+      delay(50);
+      t -= 50;
+      if (t < 0)
+        break;
+    }
+    metter_reset();
+    adc_start = true;
+  }
 
   if (Serial.available() > 0)
   {
+
     int timeout = 10000;
     String s = Serial.readString();
+
+    if (s.indexOf("set mode manual") > -1)
+    {
+      manual_mode = true;
+      metter_reset();
+    }
+
+    if (s.indexOf("set mode auto") > -1)
+    {
+      manual_mode = false;
+      metter_reset();
+    }
+
+    if (s.indexOf("manual read") > -1)
+    {
+      metter_reset();
+      adc_start = true;
+    }
+
     if (s.indexOf("set-max") > -1)
     {
+      printf("Set alarm max value (float):\r\n");
       while (timeout > 0)
       {
         if (Serial.available() > 0)
         {
           String num = Serial.readString();
           float max = num.toFloat();
-          if (max > 0)
+          int i_max = (int)(max * 100.0);
+          if (i_max > 0)
           {
-            eeprom_write(ALARM_MAX_ADDR, max);
+            eeprom_write(ALARM_MAX_ADDR, i_max);
             printf("max value %.2f\r\n", max);
           }
         }
@@ -80,15 +157,17 @@ void loop()
 
     if (s.indexOf("set-min") > -1)
     {
+      printf("Set alarm min value (float):\r\n");
       while (timeout > 0)
       {
         if (Serial.available() > 0)
         {
           String num = Serial.readString();
           float min = num.toFloat();
-          if (min > 0)
+          int i_min = (int)(min * 100.0);
+          if (i_min > 0)
           {
-            eeprom_write(ALARM_MIN_ADDR, min);
+            eeprom_write(ALARM_MIN_ADDR, i_min);
             printf("min value %.2f\r\n", min);
           }
         }
@@ -98,21 +177,29 @@ void loop()
     }
   }
 
-  if (!adc_start)
+  if (manual_mode == false)
   {
-    current_adc_value = analogRead(ADC_PIN);
-    if (current_adc_value > 1)
+    if (!adc_start)
     {
-      adc_start = true;
-      total_sample = 0;
-      printf("Start take sample\r\n");
+      current_adc_value = analogRead(ADC_PIN);
+      if (current_adc_value > 10)
+      {
+        metter_reset();
+        adc_start = true;
+        printf("Start take sample\r\n");
+      }
     }
   }
-
   if (adc_start)
   {
     if (total_sample < (TOTAL_ADC_SAMPLE - 1))
     {
+      timeout_tick++;
+      if (timeout_tick >= 100)
+      {
+        metter_reset();
+        printf("timeout\r\n");
+      }
       int temp = analogRead(ADC_PIN);
       if (temp > 0)
       {
@@ -123,16 +210,36 @@ void loop()
     }
     else
     {
-      adc_start = false;
-      adc_result = (totalCalValue / 50.0 / 4096.0) * adc_ratio;
-      totalCalValue = 0;
-      send_value();
-      buzzer_sound();
-      // send data
+      adc_result = (totalCalValue / 50.0 / 4095.0) * adc_ratio * 3.3;
+      if (!isSent)
+      {
+        printf("total adc value %d\r\n", totalCalValue);  
+        printf("avg value = %.2f\r\n",(float) totalCalValue/50.0);
+        send_value();
+        buzzer_sound();
+        isSent = true;
+      }
+      else
+      {
+        int check_adc = analogRead(ADC_PIN);
+        if (check_adc == 0)
+        {
+          metter_reset();
+        }
+      }
     }
   }
 
   delay(20);
+}
+
+void metter_reset()
+{
+  adc_start = false;
+  isSent = false;
+  totalCalValue = 0;
+  total_sample = 0;
+  timeout_tick = 0;
 }
 
 void metter_start()
@@ -143,49 +250,74 @@ void metter_start()
   }
 }
 
-void eeprom_write(int addr, float value)
+void eeprom_write(int addr, int value)
 {
   EEPROM.begin();
-  EEPROM.put(addr, value);
+  for (int i = 0; i < 4; i++)
+  {
+    EEPROM.write(addr + i, (uint8_t)(value >> (i * 8)));
+  }
   EEPROM.end();
+  printf("write value %d\r\n", value);
 }
 
-void eeprom_read(int addr, float value)
+int eeprom_read(int addr)
 {
+  int value = 0;
   EEPROM.begin();
-  EEPROM.get(addr, value);
+  for (int i = 0; i < 4; i++)
+  {
+    uint8_t temp = EEPROM.read(addr + i);
+    value += (temp << (8 * i));
+  }
   EEPROM.end();
+  printf("read value %d\r\n", value);
+  return value;
 }
 
 void send_value()
 {
   printf("send value %.2f\r\n", adc_result);
-  
-  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f\r", adc_result);
+
+  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f", adc_result);
+  printf("packet len %d\r\n", len);
   for (int i = 0; i < len; i++)
   {
     Keyboard.write(keyboard_buffer[i]);
   }
-  adc_result = 0.0;
 
   if (adc_result > alarm_max)
   {
-    Keyboard.write(26); //->
-    Keyboard.write(24); //^
+    /*
+
+In short:
+
+left arrow: 37
+up arrow: 38
+right arrow: 39
+down arrow: 40
+tab 09
+    */
+    Keyboard.write(9); //tab
     Keyboard.write('H');
     Keyboard.write('i');
     Keyboard.write('g');
     Keyboard.write('h');
-    Keyboard.write('\r');
+    Keyboard.write('\r\n');
+    Keyboard.write(27); // <-
   }
   else if (adc_result < alarm_min)
   {
-    Keyboard.write(26); //->
-    Keyboard.write(24); //^
+    Keyboard.write(9); //tab
     Keyboard.write('L');
     Keyboard.write('o');
     Keyboard.write('w');
-    Keyboard.write('\r');
+    Keyboard.write('\r\n');
+    Keyboard.write(27); // <-
+  }
+  else
+  {
+    Keyboard.write('\r\n');
   }
 }
 

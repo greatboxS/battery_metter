@@ -1,6 +1,7 @@
 {
     "board": "STM32:stm32:GenF1",
-    "configuration": "pnum=BLUEPILL_F103C8,upload_method=swdMethod,xserial=generic,usb=HID,xusb=FS,opt=osstd,rtlib=nano",
+    "configuration": "pnum=BLUEPILL_F103C8,upload_method=swdMethod,xserial=generic,usb=HID,xusb=FS,opt=osstd,rtlib=nanofp",
     "sketch": "metter.ino",
-    "output": "D:/vs_code/Arduino/metter/build"
+    "output": "D:/vs_code/Arduino/metter/build",
+    "port": "COM5"
 }
