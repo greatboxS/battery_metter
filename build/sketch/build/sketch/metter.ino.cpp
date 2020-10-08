@@ -203,7 +203,7 @@ void loop()
         printf("timeout\r\n");
       }
       int temp = analogRead(ADC_PIN);
-      if (temp > 0)
+      if (temp >= 0)
       {
         totalCalValue += temp;
         total_sample++;

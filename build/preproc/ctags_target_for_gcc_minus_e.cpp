@@ -189,7 +189,7 @@ void loop()
         printf("timeout\r\n");
       }
       int temp = analogRead(A0);
-      if (temp > 0)
+      if (temp >= 0)
       {
         totalCalValue += temp;
         total_sample++;
