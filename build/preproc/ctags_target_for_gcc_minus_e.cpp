@@ -5,13 +5,13 @@
 # 18 "d:\\vs_code\\Arduino\\metter\\metter.ino"
 float adc_result = 0.0;
 int current_adc_value;
-int totalCalValue = 0;
+long totalCalValue = 0;
 
 int sys_tick = 0;
 int total_sample = 0;
 float alarm_max = 15.0;
 float alarm_min = 11.0;
-double adc_ratio = 0.0;
+float adc_ratio = 0.0;
 bool adc_start = false;
 char keyboard_buffer[50];
 bool isSent = false;
@@ -22,10 +22,12 @@ bool manual_mode = false;
 void setup()
 {
   // button
-  pinMode(0, 0x2);
-  pinMode(1, 0x2);
-  pinMode(2, 0x1);
-  digitalWrite(2, 0x0);
+  pinMode(28 /* A8*/, 0x2);
+  pinMode(29 /* A9*/, 0x2);
+  pinMode(30, 0x1);
+  digitalWrite(30, 0x0);
+  pinMode(17 /* LED Bluepill*/, 0x1);
+  digitalWrite(17 /* LED Bluepill*/, 0x0);
 
   // adcs
   pinMode(A0, 0x4);
@@ -37,38 +39,15 @@ void setup()
   Keyboard.begin();
   printf("12VDC Battery DC Metter\r\n");
 
-  int alr_min = 0, alr_max = 0;
-  alr_min = eeprom_read(4);
-  alr_max = eeprom_read(0);
-
-  alarm_max = alr_max / 100;
-  alarm_min = alr_min / 100;
-
-  adc_ratio = 57.0 / 10.0;
-
-  if (alarm_min < 0 || alarm_min > 15)
-  {
-    int temp = 1100;
-    eeprom_write(4, temp);
-    alr_min = eeprom_read(4);
-    alarm_min = alr_min / 100.0;
-  }
-
-  if (alarm_max < 0 || alarm_max > 20)
-  {
-    int temp = 1500;
-    eeprom_write(0, temp);
-    alr_max = eeprom_read(0);
-    alarm_max = alr_max / 100.0;
-  }
+  adc_ratio = 5.7;
 }
 
 void loop()
 {
-  if (digitalRead(0) == 0x0)
+  if (digitalRead(28 /* A8*/) == 0x0)
   {
     int t = 5000;
-    while (digitalRead(0) == 0x0)
+    while (digitalRead(28 /* A8*/) == 0x0)
     {
       delay(50);
       t -= 50;
@@ -76,18 +55,22 @@ void loop()
         break;
     }
     manual_mode = !manual_mode;
-    if(manual_mode)
+    if(manual_mode){
       printf("select manual mode\r\n");
-      else
+      digitalWrite(17 /* LED Bluepill*/, 0x1);
+    }
+      else{
       printf("select auto mode\r\n");
+       digitalWrite(17 /* LED Bluepill*/, 0x0);
+      }
 
     metter_reset();
   }
 
-  if (digitalRead(1) == 0x0)
+  if (digitalRead(29 /* A9*/) == 0x0)
   {
     int t = 5000;
-    while (digitalRead(1) == 0x0)
+    while (digitalRead(29 /* A9*/) == 0x0)
     {
       delay(50);
       t -= 50;
@@ -170,17 +153,19 @@ void loop()
     if (!adc_start)
     {
       current_adc_value = analogRead(A0);
-      if (current_adc_value > 10)
+      if (current_adc_value >= 100)
       {
         metter_reset();
         adc_start = true;
         printf("Start take sample\r\n");
+
+        delay(500);
       }
     }
   }
   if (adc_start)
   {
-    if (total_sample < (50 - 1))
+    if (total_sample < 50)
     {
       timeout_tick++;
       if (timeout_tick >= 100)
@@ -198,13 +183,12 @@ void loop()
     }
     else
     {
-      adc_result = (totalCalValue / 50.0 / 4095.0) * adc_ratio * 3.3;
+      adc_result = totalCalValue* 18.81 / 4095.0 / 50.0 ; //(5.7 * 3.3)=18.81
       if (!isSent)
       {
         printf("total adc value %d\r\n", totalCalValue);
-        printf("avg value = %.2f\r\n",(float) totalCalValue/50.0);
+        printf("avg value = %.2f\r\n",(float)(totalCalValue/50.0));
         send_value();
-        buzzer_sound();
         isSent = true;
       }
       else
@@ -267,61 +251,22 @@ void send_value()
 {
   printf("send value %.2f\r\n", adc_result);
 
-  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f", adc_result);
+  if(adc_result == 0 && !manual_mode)
+    return;
+
+  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f\r\n", adc_result);
   printf("packet len %d\r\n", len);
   for (int i = 0; i < len; i++)
   {
     Keyboard.write(keyboard_buffer[i]);
   }
 
-  if (adc_result > alarm_max)
-  {
-    /*
-
-
-
-In short:
-
-
-
-left arrow: 37
-
-up arrow: 38
-
-right arrow: 39
-
-down arrow: 40
-
-tab 09
-
-    */
-# 301 "d:\\vs_code\\Arduino\\metter\\metter.ino"
-    Keyboard.write(9); //tab
-    Keyboard.write('H');
-    Keyboard.write('i');
-    Keyboard.write('g');
-    Keyboard.write('h');
-    Keyboard.write('\r\n');
-    Keyboard.write(27); // <-
-  }
-  else if (adc_result < alarm_min)
-  {
-    Keyboard.write(9); //tab
-    Keyboard.write('L');
-    Keyboard.write('o');
-    Keyboard.write('w');
-    Keyboard.write('\r\n');
-    Keyboard.write(27); // <-
-  }
-  else
-  {
-    Keyboard.write('\r\n');
-  }
+  buzzer_sound();
 }
 
 void buzzer_sound()
 {
-  digitalWrite(2, 0x1);
-  delay(50);
-  digitalWrite(2, 0x0);
+  digitalWrite(30, 0x1);
+  delay(100);
+  digitalWrite(30, 0x0);
 }

@@ -3,10 +3,10 @@
 #include "EEPROM.h"
 
 #define ADC_PIN A0
-#define BUTTON_1_PIN B0
-#define BUTTON_2_PIN B1
-#define BUZZER_CONTROL_PIN B10
-
+#define BUTTON_1_PIN PB0
+#define BUTTON_2_PIN PB1
+#define BUZZER_CONTROL_PIN PB10
+#define MANUAL_LED        PC13
 #define TOTAL_ADC_SAMPLE 50
 
 #define ALARM_MAX_ADDR 0
@@ -17,13 +17,13 @@
 
 float adc_result = 0.0;
 int current_adc_value;
-int totalCalValue = 0;
+long totalCalValue = 0;
 
 int sys_tick = 0;
 int total_sample = 0;
 float alarm_max = 15.0;
 float alarm_min = 11.0;
-double adc_ratio = 0.0;
+float adc_ratio = 0.0;
 bool adc_start = false;
 char keyboard_buffer[50];
 bool isSent = false;
@@ -38,6 +38,8 @@ void setup()
   pinMode(BUTTON_2_PIN, INPUT_PULLUP);
   pinMode(BUZZER_CONTROL_PIN, OUTPUT);
   digitalWrite(BUZZER_CONTROL_PIN, LOW);
+  pinMode(MANUAL_LED, OUTPUT);
+  digitalWrite(MANUAL_LED, LOW);
 
   // adcs
   pinMode(ADC_PIN, INPUT_ANALOG);
@@ -49,30 +51,7 @@ void setup()
   Keyboard.begin();
   printf("12VDC Battery DC Metter\r\n");
 
-  int alr_min = 0, alr_max = 0;
-  alr_min = eeprom_read(ALARM_MIN_ADDR);
-  alr_max = eeprom_read(ALARM_MAX_ADDR);
-
-  alarm_max = alr_max / 100;
-  alarm_min = alr_min / 100;
-
-  adc_ratio = 57.0 / 10.0;
-
-  if (alarm_min < 0 || alarm_min > 15)
-  {
-    int temp = 1100;
-    eeprom_write(ALARM_MIN_ADDR, temp);
-    alr_min = eeprom_read(ALARM_MIN_ADDR);
-    alarm_min = alr_min / 100.0;
-  }
-
-  if (alarm_max < 0 || alarm_max > 20)
-  {
-    int temp = 1500;
-    eeprom_write(ALARM_MAX_ADDR, temp);
-    alr_max = eeprom_read(ALARM_MAX_ADDR);
-    alarm_max = alr_max / 100.0;
-  }
+  adc_ratio = 5.7;
 }
 
 void loop()
@@ -88,10 +67,14 @@ void loop()
         break;
     }
     manual_mode = !manual_mode;
-    if(manual_mode)
+    if(manual_mode){
       printf("select manual mode\r\n");
-      else
+      digitalWrite(MANUAL_LED, HIGH);
+    }
+      else{
       printf("select auto mode\r\n");
+       digitalWrite(MANUAL_LED, LOW);
+      }
       
     metter_reset();
   }
@@ -182,17 +165,19 @@ void loop()
     if (!adc_start)
     {
       current_adc_value = analogRead(ADC_PIN);
-      if (current_adc_value > 10)
+      if (current_adc_value >= 100)
       {
         metter_reset();
         adc_start = true;
         printf("Start take sample\r\n");
+
+        delay(500);
       }
     }
   }
   if (adc_start)
   {
-    if (total_sample < (TOTAL_ADC_SAMPLE - 1))
+    if (total_sample < TOTAL_ADC_SAMPLE)
     {
       timeout_tick++;
       if (timeout_tick >= 100)
@@ -210,13 +195,12 @@ void loop()
     }
     else
     {
-      adc_result = (totalCalValue / 50.0 / 4095.0) * adc_ratio * 3.3;
+      adc_result = totalCalValue* 18.81 / 4095.0 / 50.0 ; //(5.7 * 3.3)=18.81
       if (!isSent)
       {
         printf("total adc value %d\r\n", totalCalValue);  
-        printf("avg value = %.2f\r\n",(float) totalCalValue/50.0);
+        printf("avg value = %.2f\r\n",(float)(totalCalValue/50.0));
         send_value();
-        buzzer_sound();
         isSent = true;
       }
       else
@@ -279,51 +263,22 @@ void send_value()
 {
   printf("send value %.2f\r\n", adc_result);
 
-  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f", adc_result);
+  if(adc_result == 0 && !manual_mode)
+    return;
+
+  int len = snprintf((char *)keyboard_buffer, sizeof(keyboard_buffer), "%.2f\r\n", adc_result);
   printf("packet len %d\r\n", len);
   for (int i = 0; i < len; i++)
   {
     Keyboard.write(keyboard_buffer[i]);
   }
 
-  if (adc_result > alarm_max)
-  {
-    /*
-
-In short:
-
-left arrow: 37
-up arrow: 38
-right arrow: 39
-down arrow: 40
-tab 09
-    */
-    Keyboard.write(9); //tab
-    Keyboard.write('H');
-    Keyboard.write('i');
-    Keyboard.write('g');
-    Keyboard.write('h');
-    Keyboard.write('\r\n');
-    Keyboard.write(27); // <-
-  }
-  else if (adc_result < alarm_min)
-  {
-    Keyboard.write(9); //tab
-    Keyboard.write('L');
-    Keyboard.write('o');
-    Keyboard.write('w');
-    Keyboard.write('\r\n');
-    Keyboard.write(27); // <-
-  }
-  else
-  {
-    Keyboard.write('\r\n');
-  }
+  buzzer_sound();
 }
 
 void buzzer_sound()
 {
   digitalWrite(BUZZER_CONTROL_PIN, HIGH);
-  delay(50);
+  delay(100);
   digitalWrite(BUZZER_CONTROL_PIN, LOW);
 }
